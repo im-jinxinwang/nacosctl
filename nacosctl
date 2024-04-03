@@ -1,0 +1,414 @@
+#!/bin/bash
+
+declare -r NAMESPACE_ENDPOINT='/nacos/v2/console/namespace'
+declare -r USER_ENDPOINT='/nacos/v1/auth/users'
+declare -r ROLE_ENDPOINT='/nacos/v1/auth/roles'
+declare -r PERMISSIONS_ENDPOINT='/nacos/v1/auth/permissions'
+
+ACCESSTOKEN=""
+
+green() {
+    echo -e "\033[32m$@\033[0m"
+}
+
+yellow() {
+    echo -e "\033[33m$@\033[0m"
+}
+
+red() {
+    echo -e "\033[31m$@\033[0m"
+}
+
+CheckVariables() {
+    if [ -z "$NACOS_URL" ]; then
+        echo "Error: NACOS_URL is not set. This is a required parameter."
+        exit 1
+    fi
+    
+    if [ -z "$USERNAME" ]; then
+        echo "Error: USERNAME is not set. This is a required parameter."
+        exit 1
+    fi
+    
+    if [ -z "$PASSWORD" ]; then
+        echo "Error: PASSWORD is not set. This is a required parameter."
+        exit 1
+    fi
+}
+
+# 获取访问令牌
+GetAccessToken() {
+    local ENDPOINT='/nacos/v1/auth/users/login'
+    local accessToken=$(curl -s -X POST "${NACOS_URL}${ENDPOINT}" \
+          -d "username=$USERNAME" \
+          -d "password=$PASSWORD" | jq -r '.accessToken')
+
+    if [[ -z "$accessToken" ]]; then
+        red "Failed to get access token." >&2
+        exit 1
+    else
+        ACCESSTOKEN="$accessToken"
+    fi
+}
+
+# 判断连接地址是否正常
+CheckAccess() {
+    local response=$(curl -s -o /dev/null -m 15 -w "%{http_code}" "$1")
+    if [[ ! "$response" =~ ^(200|301|302)$ ]]; then
+        red "ERROR: Failed to connect to $1. HTTP status code: $response" >&2
+        exit 1
+    fi
+}
+
+manageUser() {
+    GetAccessToken
+    local COMMAND="$1"
+    local USERNAME="$2"
+    local PASSWORD="$3"
+    local NEW_PASSWORD="$3"
+    local URL="${NACOS_URL}${USER_ENDPOINT}"
+    
+    case "$COMMAND" in
+        "add")
+            local response=$(curl -s -X POST "${URL}?accessToken=${ACCESSTOKEN}&username=${USERNAME}&password=${PASSWORD}")
+            if [[ "$response" == *"create user ok"* ]]; then
+                green "User ${USERNAME} created successfully."
+            elif [[ "$response" == *"user '${USERNAME}' already exist"* ]]; then
+                yellow "User ${USERNAME} already exists."
+            else
+                red "Error: $response" >&2
+            fi
+            ;;
+        "del" | "delete")
+            local response=$(curl -s -X DELETE "${URL}" \
+                                -d "accessToken=${ACCESSTOKEN}" \
+                                -d "username=${USERNAME}")
+            echo $response
+            ;;
+        "list")
+            local PARAMS="?pageNo=1&pageSize=9&search=accurate"
+            local response=$(curl -s -X GET "${URL}${PARAMS}&accessToken=${ACCESSTOKEN}")
+            echo "$response" | jq -r '.pageItems[] | {username, password}'
+            ;;
+        "edit")
+            if [[ "$USERNAME" == "nacos" ]]; then
+                read -p "Are you sure you want to change the password for 'nacos' user? (y/n): " confirm
+                if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+                yellow "Password change aborted."
+                exit 0
+                fi
+             fi
+            local response=$(curl -s -X PUT "${URL}" \
+                                -d "accessToken=${ACCESSTOKEN}" \
+                                -d "username=${USERNAME}" \
+                                -d "newPassword=${NEW_PASSWORD}")
+            echo $response
+            ;;
+    esac
+}
+
+manageRole() {
+    GetAccessToken
+    local COMMAND="$1"
+    local ROLE="$2"
+    local USERNAME="$3"
+    local URL="${NACOS_URL}${ROLE_ENDPOINT}"
+    
+    case "$COMMAND" in
+        "add")
+            local response=$(curl -s -X POST "${URL}?accessToken=${ACCESSTOKEN}&role=${ROLE}&username=${USERNAME}")
+            if [[ "$response" == *"add role ok"* ]]; then
+                green "Role ${ROLE} created successfully."
+            elif [[ "$response" == *"Duplicate entry"* ]]; then
+                yellow "Role ${ROLE} already exists."
+            else
+                red "Error: $response" >&2
+            fi
+            ;;
+        "del" | "delete")
+            local response=$(curl -s -X DELETE "${URL}" \
+                                -d "role=${ROLE}" \
+                                -d "username=${USERNAME}" \
+                                -d "accessToken=${ACCESSTOKEN}")
+            echo $response
+            ;;
+        "list")
+            local PARAMS="?pageNo=1&pageSize=9&role=&search=accurate"
+            local response=$(curl -s -X GET "${URL}${PARAMS}&accessToken=${ACCESSTOKEN}")
+            echo "$response" | jq -r '.pageItems[] | {role, username}'
+            ;;
+    esac
+}
+
+manageNamespace() {
+    GetAccessToken
+    local COMMAND="$1"
+    local NAMESPACE_ID="$2"
+    local NAMESPACE_NAME="$3"
+    local NAMESPACE_DESC="$4"
+    local URL="${NACOS_URL}${NAMESPACE_ENDPOINT}"
+    
+    case "$COMMAND" in
+        "add")
+            local response=$(curl -s -d "namespaceId=${NAMESPACE_ID}" \
+                                -d "namespaceName=${NAMESPACE_NAME}" \
+                                -d "accessToken=${ACCESSTOKEN}" \
+                                -d "namespaceDesc=${NAMESPACE_DESC}" \
+                                -X POST "$URL")
+
+            if [[ "$response" == *"success"* ]]; then
+                echo "Namespace ${NAMESPACE_NAME} created successfully."
+            elif [[ "$response" == *"already exists"* ]]; then
+                echo "Namespace ${NAMESPACE_NAME} already exists."
+            else
+                echo "Error: $response" >&2
+            fi
+            ;;
+        "del" | "delete")
+            if [[ "$NAMESPACE_ID" == "public" ]]; then
+                red "Error: Cannot delete 'public' namespace."
+                exit 1
+            fi
+
+            local response=$(curl -s -d "namespaceId=${NAMESPACE_ID}" \
+                                    -d "accessToken=${ACCESSTOKEN}" \
+                                    -X DELETE "$URL")
+            echo $response
+            ;;
+        "list")
+            # Nacos API V1：/nacos/v1/console/namespaces 
+            local response=$(curl -s -X GET "${URL}/list" \
+                                -d "accessToken=${ACCESSTOKEN}")
+            echo "$response" | jq -r '.data[] | {"Namespace": .namespaceShowName, Description: .namespaceDesc}'
+            ;;
+        "edit")
+            local response=$(curl -s -d "namespaceId=${NAMESPACE_ID}" \
+                                -d "namespaceName=${NAMESPACE_NAME}" \
+                                -d "namespaceDesc=${NAMESPACE_DESC}" \
+                                -d "accessToken=${ACCESSTOKEN}" \
+                                -X PUT "$URL")
+            echo $response
+            ;;
+    esac
+}
+
+managePermissions() {
+    GetAccessToken
+    local COMMAND="$1"
+    local ROLE="$2"
+    local RESOURCE="$3"
+    local ACTION="$4"
+    local URL="${NACOS_URL}${PERMISSIONS_ENDPOINT}"
+    
+    case "$COMMAND" in
+        "add")
+            local response=$(curl -s -X POST "${URL}?accessToken=${ACCESSTOKEN}&role=${ROLE}&resource=${RESOURCE}&action=${ACTION}")
+            if [[ "$response" == *"add permission ok"* ]]; then
+                green "Permissions added successfully for role ${ROLE} on resource ${RESOURCE}."
+            elif [[ "$response" == *"Duplicate entry"* ]]; then
+                yellow "Permissions for role ${ROLE} on resource ${RESOURCE} already exist."
+            else
+                red "Error: $response" >&2
+            fi
+            ;;
+        "del" | "delete")
+            local response=$(curl -s -X DELETE "${URL}" \
+                                -d "role=${ROLE}" \
+                                -d "resource=${RESOURCE}" \
+                                -d "action=${ACTION}" \
+                                -d "accessToken=${ACCESSTOKEN}")
+            echo $response
+            ;;
+        "list")
+            local PARAMS="?pageNo=1&pageSize=9&role=&search=accurate"
+            local response=$(curl -s -X GET "${URL}${PARAMS}&accessToken=${ACCESSTOKEN}")
+            echo "$response" | jq -r '.pageItems[] | {role, resource, action}'
+            ;;
+    esac
+}
+
+init_configuration() {
+    local config_file="$HOME/.nacos/config"
+
+    # Create the directory if it doesn't exist
+    mkdir -p "$(dirname "$config_file")"
+    
+    if [ -f "$config_file" ]; then
+        NACOS_URL=$(jq -r '.nacos_url' "$config_file")
+        USERNAME=$(jq -r '.username' "$config_file")
+        PASSWORD=$(jq -r '.password' "$config_file")
+        return
+    fi
+    
+    echo "Enter Nacos configuration details:"
+    read -rp "Nacos URL: " NACOS_URL
+    read -rp "Username: " USERNAME
+    read -rp "Password: " PASSWORD
+
+    # Write configuration to JSON file
+    cat <<EOF > "$config_file"
+{
+    "nacos_url": "$NACOS_URL",
+    "username": "$USERNAME",
+    "password": "$PASSWORD"
+}
+EOF
+
+    echo "Configuration saved to $config_file"
+}
+
+CommonHelp() {
+    cat <<EOF
+Usage: nacosctl <command> <subcommand> [arguments]
+
+Subcommands:
+    user         Manage users.
+    role         Manage roles.
+    permissions  Manage permissions. (Short command: p)
+    namespace    Manage namespaces. (Short command: ns)
+EOF
+}
+
+MainHelp() {
+    CommonHelp
+    cat <<EOF
+Commands:
+    list     List users, roles, permissions, or namespaces.
+    add      Add a user, role, permission, or namespace.
+    del      Delete a user, role, permission, or namespace.
+    edit     Edit a user or namespace.
+Options:
+    --help       Show help for the specific command and subcommand.
+EOF
+}
+
+ListHelp(){
+    CommonHelp
+    cat <<EOF
+Examples:
+    nacosctl list user            List all users.
+EOF
+}
+
+AddHelp() {
+    CommonHelp
+    cat <<EOF
+Examples:
+    nacosctl add user  [username]  [password]      Add a new user.
+      nacosctl add user supinfo supinfo
+    nacosctl add role  [rolename]  [username]      Add a new role.
+    nacosctl add p [rolename] [resource] [action]  Add permissions to a role.
+      nacosctl add p supinfo supinfoid rw
+    nacosctl add ns [namespaceid]  [namespacename] [namespaceDesc]      Add a new namespace.
+      nacosctl add ns supinfoid supinfo www.supinfo.cn
+EOF
+}
+
+DelHelp() {
+    CommonHelp
+    cat <<EOF
+Examples:
+    nacosctl del user  [username]      Delete a user.
+    nacosctl del role  [rolename]      Delete a role.
+    nacosctl del p [rolename] [resource] [action]  Remove permissions from a role.
+    nacosctl del ns [namespaceid]      Delete a namespace.
+EOF
+}
+
+EditHelp() {
+    CommonHelp
+    cat <<EOF
+Examples:
+    nacosctl edit user  [username]  [new password]         Edit user's password.
+    nacosctl edit ns [namespace id]  [new name] [new description]   Edit namespace details.
+EOF
+}
+
+main(){
+    # CheckVariables && CheckAccess "${NACOS_URL}/nacos"
+    init_configuration && CheckAccess "${NACOS_URL}/nacos"
+    local COMMAND="$1"
+    local SUBCOMMAND="$2"
+    case "$COMMAND" in
+    "list")
+        case "$SUBCOMMAND" in
+            "user")
+                manageUser "$COMMAND"
+                ;;
+            "role")
+                manageRole "$COMMAND"
+                ;;
+            "permissions" |"p")
+                managePermissions "$COMMAND"
+                ;;
+            "namespace" |"ns" | "n")
+                manageNamespace "$COMMAND"
+                ;;
+            *)
+                ListHelp
+                exit 1
+                ;;
+        esac
+        ;;
+    "add")
+        case "$SUBCOMMAND" in
+             "user")
+                manageUser "$COMMAND" "$3" "$4"
+                ;;
+             "role")
+                manageRole "$COMMAND" "$3" "$4"
+                ;;
+            "permissions" |"p")
+                managePermissions "$COMMAND" "$3" "$4" "$5"
+                ;;
+            "namespace" |"ns" | "n")
+                manageNamespace "$COMMAND" "$3" "$4" "$5"
+                ;;
+        *)
+                AddHelp
+                exit 1
+                ;;
+        esac
+        ;;
+    "del" | "delete")
+        case "$SUBCOMMAND" in
+             "user")
+                manageUser "$COMMAND" "$3" "$4"
+                ;;
+             "role")
+                manageRole "$COMMAND" "$3" "$4"
+                ;;
+            "permissions" | "p" )
+                managePermissions "$COMMAND" "$3" "$4" "$5"
+                ;;
+            "namespace" | "ns" | "n")
+                manageNamespace "$COMMAND" "$3" "$4" "$5"
+                ;;
+        *)
+                DelHelp
+                exit 1
+                ;;
+        esac
+        ;;     
+    "edit")
+        case "$SUBCOMMAND" in
+             "user")
+                manageUser "$COMMAND" "$3" "$4"
+                ;;
+            "namespace" | "ns" | "n")
+                manageNamespace "$COMMAND" "$3" "$4" "$5"
+                ;;
+        *)
+                EditHelp
+                exit 1
+                ;;
+        esac
+        ;;   
+    *)
+        MainHelp
+        exit 1
+        ;;
+    esac
+}
+
+main $1 $2 $3 $4 $5
