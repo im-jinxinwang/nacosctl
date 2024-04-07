@@ -1,3 +1,43 @@
-# nacosctl
-nacosctl is a powerful command-line tool designed specifically for managing Nacos, Alibaba's open-source platform for dynamic service discovery, configuration management, and service orchestration in cloud-native applications. It offers a comprehensive set of features that enable users to easily perform CRUD operations on Nacos' configurations, services, clusters, and namespaces. With nacosctl, users can achieve automated service management, enhancing operational efficiency and reducing complexity. Whether it's a development, testing, or production environment, nacosctl provides a convenient and efficient management experience. Additionally, it supports various parameter configurations and flexible command combinations to meet users' diverse needs.
+# Nacosctl Command Line Tool
 
+## Overview
+
+`nacosctl` is a command-line tool for managing Nacos. It provides a set of commands and subcommands for managing users, roles, permissions, and namespaces.
+
+## Usage
+
+```bash
+nacosctl <command> <subcommand> [arguments]
+```
+
+## Commands and Subcommands
+### Commands:
+- list: List users, roles, permissions, or namespaces.
+- add: Add a user, role, permission, or namespace.
+- del: Delete a user, role, permission, or namespace.
+- edit: Edit a user or namespace.
+
+### Subcommands:
+- user: Manage users.
+- role: Manage roles.
+- permissions (Short command: p): Manage permissions.
+- namespace (Short command: ns): Manage namespaces.
+
+### Options:
+- --help: Show help for the specific command and subcommand.
+
+## Examples
+### List all users
+```shell
+nacosctl list user
+```
+
+### Add a new user
+```shell
+nacosctl add user supinfo supinfopass
+```
+
+### Edit user's password
+```shell
+nacosctl edit user supinfo newpassword
+```
