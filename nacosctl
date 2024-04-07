@@ -4,7 +4,7 @@ declare -r NAMESPACE_ENDPOINT='/nacos/v2/console/namespace'
 declare -r USER_ENDPOINT='/nacos/v1/auth/users'
 declare -r ROLE_ENDPOINT='/nacos/v1/auth/roles'
 declare -r PERMISSIONS_ENDPOINT='/nacos/v1/auth/permissions'
-
+declare -r CLUSTER_ENDPOINT='/nacos/v2/core/cluster/node'
 ACCESSTOKEN=""
 
 green() {
@@ -227,6 +227,14 @@ managePermissions() {
     esac
 }
 
+manageCluster() {
+    GetAccessToken
+    local URL="${NACOS_URL}${CLUSTER_ENDPOINT}/list?accessToken=${ACCESSTOKEN}"
+
+    local response=$(curl -s -X GET "${URL}")
+    echo $response | jq .data
+}
+
 init_configuration() {
     local config_file="$HOME/.nacos/config"
 
@@ -285,6 +293,7 @@ EOF
 ListHelp(){
     CommonHelp
     cat <<EOF
+    cluster      List all cluster nodes.
 Examples:
     nacosctl list user            List all users.
 EOF
@@ -343,6 +352,9 @@ main(){
                 ;;
             "namespace" |"ns" | "n")
                 manageNamespace "$COMMAND"
+                ;;
+            "cluster" )
+                manageCluster "$COMMAND"
                 ;;
             *)
                 ListHelp
