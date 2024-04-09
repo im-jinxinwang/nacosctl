@@ -179,7 +179,7 @@ manageNamespace() {
             # Nacos API V1：/nacos/v1/console/namespaces 
             local response=$(curl -s -X GET "${URL}/list" \
                                 -d "accessToken=${ACCESSTOKEN}")
-            echo "$response" | jq -r '.data[] | {"Namespace": .namespaceShowName, Description: .namespaceDesc}'
+            echo "$response" |  jq '.data[] | {namespace, namespaceShowName, namespaceDesc}'
             ;;
         "edit")
             local response=$(curl -s -d "namespaceId=${NAMESPACE_ID}" \
@@ -233,6 +233,39 @@ manageCluster() {
 
     local response=$(curl -s -X GET "${URL}")
     echo $response | jq .data
+}
+
+manageConfig() {
+    GetAccessToken
+    local COMMAND="$1"
+    local NAMESPACE_ID="$2"
+    local DATA_ID="$3"
+    local GROUP="$4"
+    
+    case "$COMMAND" in
+        "list")
+            local URL="${NACOS_URL}/nacos/v2/cs/history/configs"
+            local PARAMS="?namespaceId=${NAMESPACE_ID}&accessToken=${ACCESSTOKEN}"
+            local response=$(curl -s -X GET "${URL}${PARAMS}")
+            echo "$response" | jq '.data[] | {dataId, group, tenant, type}'
+            ;;
+        "get")
+            local URL="${NACOS_URL}/nacos/v2/cs/config"
+            local PARAMS="?dataId=${DATA_ID}&group=${GROUP}&namespaceId=${NAMESPACE_ID}&accessToken=${ACCESSTOKEN}"
+            local response=$(curl -s -X GET "${URL}${PARAMS}")
+            echo "$response"| jq .
+            ;;
+    esac
+}
+
+getServieList(){
+    GetAccessToken
+    local NAMESPACE_ID="$1"
+    local GROUP="$2"
+    local URL="${NACOS_URL}/nacos/v2/ns/service/list"
+    local PARAMS="?namespaceId=${NAMESPACE_ID}&accessToken=${ACCESSTOKEN}&group=${GROUP}"
+    local response=$(curl -s -X GET "${URL}${PARAMS}")
+    echo "$response"| jq .
 }
 
 init_configuration() {
@@ -356,6 +389,12 @@ main(){
             "cluster" )
                 manageCluster "$COMMAND"
                 ;;
+            "config" )
+                manageConfig "$COMMAND" "$3"
+                ;;
+            "service" | "svc" )
+                getServieList "$3" "$4"
+                ;;
             *)
                 ListHelp
                 exit 1
@@ -412,6 +451,16 @@ main(){
                 ;;
         *)
                 EditHelp
+                exit 1
+                ;;
+        esac
+        ;;   
+    "get")
+        case "$SUBCOMMAND" in
+             "config")
+                manageConfig "$COMMAND" "$3" "$4" "$5"
+                ;;
+        *)
                 exit 1
                 ;;
         esac
